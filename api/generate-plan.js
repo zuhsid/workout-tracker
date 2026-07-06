@@ -26,7 +26,7 @@ export default async function handler(req, res) {
     "Fixed activities this week: " + fixedActivities,
     "Additional context: " + context,
     "Rules: 4 lifting sessions per week using an upper/lower split with both strength and hypertrophy days. Keep every session under 60 minutes. Do not stack heavy lifting on the same day as intense sport. Include power work such as box jumps or broad jumps on lower-body days. Include shoulder prehab such as face pulls on upper-body days. Apply progressive overload and state in each exercise's notes when to add weight.",
-    "The week is Monday-anchored: include all seven days Monday through Sunday.",
+    "The week is Monday-anchored: include all seven days Monday through Sunday. Keep the plan compact: no warm-up sections, at most two sections per day, and keep notes brief or empty.",
     "Respond ONLY with valid JSON, no markdown and no backticks. The shape is: a top-level \"days\" object whose keys are Monday, Tuesday, Wednesday, Thursday, Friday, Saturday, Sunday. Each day is an object with: title (string), type (one of: lift, sport, recovery, class, other), duration (string, may be empty), and sections (array; may be empty for rest, sport, class, or recovery days). Each section has name (string) and exercises (array). Each exercise has name (string), sets (string), reps (string), and notes (string, may be empty)."
   ].join(" ");
 
@@ -40,7 +40,7 @@ export default async function handler(req, res) {
       },
       body: JSON.stringify({
         model: "claude-sonnet-4-6",
-        max_tokens: 2000,
+        max_tokens: 8000,
         messages: [{ role: "user", content: prompt }]
       })
     });
@@ -50,6 +50,11 @@ export default async function handler(req, res) {
     if (!anthropicRes.ok) {
       const msg = (data && data.error && data.error.message) || ("Anthropic API returned status " + anthropicRes.status);
       res.status(502).json({ error: msg });
+      return;
+    }
+
+    if (data.stop_reason === "max_tokens") {
+      res.status(502).json({ error: "The plan was too long and got cut off. Try again, or add context asking for a shorter plan." });
       return;
     }
 
@@ -63,7 +68,7 @@ export default async function handler(req, res) {
     try {
       plan = JSON.parse(text);
     } catch (_) {
-      res.status(502).json({ error: "Claude did not return valid JSON. Raw start: " + text.slice(0, 200) });
+      res.status(502).json({ error: "Claude did not return valid JSON. Raw start: " + text.slice(0, 400) + " ... Raw end: " + text.slice(-200) });
       return;
     }
 
