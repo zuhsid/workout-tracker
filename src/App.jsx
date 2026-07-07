@@ -149,18 +149,64 @@ function getWeekKeyFromDate(dateStr) {
   return toLocalDateStr(mon);
 }
 
+// Summarize the last few weeks of lifting so plan generation can apply
+// progressive overload from real numbers instead of guessing.
+function summarizeRecentTraining(workoutLogs, weeksBack = 4) {
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - weeksBack * 7);
+  const cutoffStr = toLocalDateStr(cutoff);
+  const byExercise = {};
+  (workoutLogs || []).forEach(log => {
+    if (log.type !== "lift" || !log.date || log.date < cutoffStr) return;
+    (log.exercises || []).forEach(ex => {
+      if (!ex.name) return;
+      const key = ex.name.toLowerCase().trim();
+      const sets = (ex.sets || [])
+        .map(s => ({ w: parseFloat(s.weight), r: parseInt(s.reps) }))
+        .filter(s => s.w > 0 && s.r > 0);
+      if (!sets.length) return;
+      const entry = byExercise[key] || { name: ex.name, lastDate: "", lastSets: [], best: null };
+      if (log.date >= entry.lastDate) {
+        entry.lastDate = log.date;
+        entry.lastSets = sets;
+      }
+      sets.forEach(s => {
+        if (!entry.best || s.w > entry.best.w || (s.w === entry.best.w && s.r > entry.best.r)) {
+          entry.best = s;
+        }
+      });
+      byExercise[key] = entry;
+    });
+  });
+  const lines = Object.values(byExercise).map(e =>
+    e.name + " (last " + e.lastDate + "): " +
+    e.lastSets.map(s => s.w + "x" + s.r).join(", ") +
+    "; best recent set: " + e.best.w + "x" + e.best.r
+  );
+  return lines.length ? lines.join(". ") : "";
+}
+
 function planExercisesToLogExercises(sections) {
   if (!sections || sections.length === 0) return [{ name: "", sets: [{ weight: "", reps: "", rpe: "", rest: "" }] }];
   const exercises = [];
   sections.forEach(sec => {
     (sec.exercises || []).forEach(ex => {
-      const setCount = parseInt(ex.sets) || 3;
+      // Prefer the prescription arrays for set count so warmup sets get rows too
+      const arrLen = Math.max(
+        Array.isArray(ex.weights) ? ex.weights.length : 0,
+        Array.isArray(ex.repsPerSet) ? ex.repsPerSet.length : 0
+      );
+      const setCount = arrLen || parseInt(ex.sets) || 3;
       exercises.push({
         name: ex.name,
         plannedSets: ex.sets,
         plannedReps: ex.reps,
         notes: ex.notes || "",
-        sets: Array.from({ length: setCount }, () => ({ weight: "", reps: "", rpe: "", rest: "" }))
+        sets: Array.from({ length: setCount }, (_, k) => ({
+          weight: Array.isArray(ex.weights) && ex.weights[k] != null ? String(ex.weights[k]) : "",
+          reps: Array.isArray(ex.repsPerSet) && ex.repsPerSet[k] != null ? String(ex.repsPerSet[k]) : "",
+          rpe: "", rest: ""
+        }))
       });
     });
   });
@@ -195,7 +241,7 @@ export default function App() {
         ))}
       </div>
 
-      {tab === 0 && <WeekView weekKey={weekKey} weekOffset={weekOffset} setWeekOffset={setWeekOffset}
+      {tab === 0 && <WeekView weekKey={weekKey} weekOffset={weekOffset} setWeekOffset={setWeekOffset} workoutLogs={workoutLogs}
         fixedActivities={fixedActivities} weeklyPlans={weeklyPlans} setWeeklyPlans={setWeeklyPlans}
         effectivePlans={effectivePlans} setTab={setTab} />}
       {tab === 1 && <LogWorkout workoutLogs={workoutLogs} setWorkoutLogs={setWorkoutLogs}
@@ -207,7 +253,7 @@ export default function App() {
   );
 }
 
-function WeekView({ weekKey, weekOffset, setWeekOffset, fixedActivities, weeklyPlans, setWeeklyPlans, effectivePlans, setTab }) {
+function WeekView({ weekKey, weekOffset, setWeekOffset, workoutLogs, fixedActivities, weeklyPlans, setWeeklyPlans, effectivePlans, setTab }) {
   const [loading, setLoading] = useState(false);
   const [genError, setGenError] = useState("");
   const [showPaste, setShowPaste] = useState(false);
@@ -232,7 +278,8 @@ function WeekView({ weekKey, weekOffset, setWeekOffset, fixedActivities, weeklyP
     setLoading(true);
     setGenError("");
     const fixedList = fixedActivities.map(a => a.day + ": " + a.name + " (" + a.type + ")").join(", ") || "none";
-    const payload = { fixedActivities: fixedList, context: weekContext || "none" };
+    const recentTraining = summarizeRecentTraining(workoutLogs);
+    const payload = { fixedActivities: fixedList, context: weekContext || "none", recentTraining: recentTraining || "none" };
 
     let res, data;
     try {
@@ -345,7 +392,7 @@ function WeekView({ weekKey, weekOffset, setWeekOffset, fixedActivities, weeklyP
                         <div key={ei}>
                           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", padding: "3px 0", borderBottom: ei < sec.exercises.length - 1 ? "0.5px solid var(--color-border-tertiary)" : "none", gap: 8 }}>
                             <span style={{ fontSize: 13 }}>{ex.name}</span>
-                            <span style={{ fontSize: 12, color: "var(--color-text-secondary)", whiteSpace: "nowrap" }}>{ex.sets}×{ex.reps}</span>
+                            <span style={{ fontSize: 12, color: "var(--color-text-secondary)", whiteSpace: "nowrap" }}>{ex.sets}×{ex.reps}{Array.isArray(ex.weights) && ex.weights.length ? " @ " + [...new Set(ex.weights)].join("/") + " lb" : ""}</span>
                           </div>
                           {ex.notes ? <p style={{ fontSize: 12, color: "var(--color-text-secondary)", margin: "2px 0 4px", fontStyle: "italic" }}>{ex.notes}</p> : null}
                         </div>
