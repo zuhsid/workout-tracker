@@ -183,7 +183,20 @@ function summarizeRecentTraining(workoutLogs, weeksBack = 4) {
     e.lastSets.map(s => s.w + "x" + s.r).join(", ") +
     "; best recent set: " + e.best.w + "x" + e.best.r
   );
-  return lines.length ? lines.join(". ") : "";
+  // Include the client's own session notes so generation can react to them
+  const noteLines = (workoutLogs || [])
+    .filter(l => l.type === "lift" && l.date >= cutoffStr && l.notes && l.notes.trim())
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .map(l => l.date + " (" + (l.name || "session") + "): " + l.notes.trim().slice(0, 300));
+  let out = lines.length ? lines.join(". ") : "";
+  if (noteLines.length) out += (out ? ". " : "") + "Client session notes: " + noteLines.join(" | ");
+  return out;
+}
+
+function isDumbbellExercise(name) {
+  if (!name) return false;
+  const n = name.toLowerCase();
+  return n.includes("dumbbell") || /(^|[^a-z])db([^a-z]|$)/.test(n);
 }
 
 function planExercisesToLogExercises(sections) {
@@ -545,7 +558,7 @@ function LogWorkout({ workoutLogs, setWorkoutLogs, prs, setPrs, effectivePlans }
                 return (
                   <div key={j} style={{ display: "flex", gap: 6, marginBottom: 8, alignItems: "flex-end" }}>
                     <div style={{ flex: 2 }}>
-                      {j === 0 && <p style={{ fontSize: 11, color: "var(--color-text-tertiary)", margin: "0 0 3px", fontWeight: 500 }}>{isH ? "Height (in)" : "Weight (lb)"}</p>}
+                      {j === 0 && <p style={{ fontSize: 11, color: "var(--color-text-tertiary)", margin: "0 0 3px", fontWeight: 500 }}>{isH ? "Height (in)" : isDumbbellExercise(ex.name) ? "Weight (lb, both DBs)" : "Weight (lb)"}</p>}
                       <input type="number" inputMode="numeric" placeholder={isH ? "24" : "135"} value={s.weight} onChange={e => updateSet(i, j, "weight", e.target.value)} style={{ width: "100%", boxSizing: "border-box", textAlign: "center" }} />
                     </div>
                     <div style={{ flex: 2 }}>
