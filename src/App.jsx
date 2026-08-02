@@ -10,7 +10,15 @@ const STORAGE_KEYS = {
 };
 
 const DAYS = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
-const HEIGHT_EXERCISES = ["box jumps", "box jump", "broad jumps", "broad jump"];
+const MEASURE_UNITS = {
+  "box jumps": { unit: "in", label: "Height (in)", placeholder: "24" },
+  "box jump": { unit: "in", label: "Height (in)", placeholder: "24" },
+  "broad jumps": { unit: "yd", label: "Distance (yd)", placeholder: "2.5" },
+  "broad jump": { unit: "yd", label: "Distance (yd)", placeholder: "2.5" },
+};
+function getMeasure(name) {
+  return MEASURE_UNITS[(name || "").toLowerCase().trim()] || null;
+}
 
 const COLOR = {
   lift: { bg: "#E6F1FB", text: "#0C447C" },
@@ -197,6 +205,13 @@ function isDumbbellExercise(name) {
   if (!name) return false;
   const n = name.toLowerCase();
   return n.includes("dumbbell") || /(^|[^a-z])db([^a-z]|$)/.test(n);
+}
+
+// Exercises done with one dumbbell at a time: the logged weight is that single dumbbell
+function isSingleDumbbell(name) {
+  if (!name) return false;
+  const n = name.toLowerCase();
+  return /single[- ]?arm|one[- ]?arm|single[- ]?leg|goblet/.test(n);
 }
 
 function planExercisesToLogExercises(sections) {
@@ -488,13 +503,13 @@ function LogWorkout({ workoutLogs, setWorkoutLogs, prs, setPrs, effectivePlans }
     exercises.forEach(ex => {
       if (!ex.name) return;
       const key = ex.name.toLowerCase().trim();
-      const isH = HEIGHT_EXERCISES.includes(key);
+      const measure = getMeasure(ex.name);
       ex.sets.forEach(s => {
         const w = parseFloat(s.weight), r = parseInt(s.reps);
-        if (!w || (!r && !isH)) return;
-        if (isH) {
+        if (!w || (!r && !measure)) return;
+        if (measure) {
           if (!newPrs[key] || w > newPrs[key].weight) {
-            newPrs[key] = { weight: w, reps: r || 1, date, exerciseName: ex.name, isHeight: true };
+            newPrs[key] = { weight: w, reps: r || 1, date, exerciseName: ex.name, isHeight: true, unit: measure.unit };
           }
         } else {
           if (!newPrs[key] || w > newPrs[key].weight || (w === newPrs[key].weight && r > newPrs[key].reps)) {
@@ -553,13 +568,13 @@ function LogWorkout({ workoutLogs, setWorkoutLogs, prs, setPrs, effectivePlans }
                 </p>
               )}
               {ex.sets.map((s, j) => {
-                const isH = HEIGHT_EXERCISES.includes(ex.name?.toLowerCase().trim());
+                const measure = getMeasure(ex.name);
                 const isLast = j === ex.sets.length - 1;
                 return (
                   <div key={j} style={{ display: "flex", gap: 6, marginBottom: 8, alignItems: "flex-end" }}>
                     <div style={{ flex: 2 }}>
-                      {j === 0 && <p style={{ fontSize: 11, color: "var(--color-text-tertiary)", margin: "0 0 3px", fontWeight: 500 }}>{isH ? "Height (in)" : isDumbbellExercise(ex.name) ? "Weight (lb, both DBs)" : "Weight (lb)"}</p>}
-                      <input type="number" inputMode="numeric" placeholder={isH ? "24" : "135"} value={s.weight} onChange={e => updateSet(i, j, "weight", e.target.value)} style={{ width: "100%", boxSizing: "border-box", textAlign: "center" }} />
+                      {j === 0 && <p style={{ fontSize: 11, color: "var(--color-text-tertiary)", margin: "0 0 3px", fontWeight: 500 }}>{measure ? measure.label : isDumbbellExercise(ex.name) && !isSingleDumbbell(ex.name) ? "Weight (lb, both DBs)" : "Weight (lb)"}</p>}
+                      <input type="number" inputMode="decimal" step="any" placeholder={measure ? measure.placeholder : "135"} value={s.weight} onChange={e => updateSet(i, j, "weight", e.target.value)} style={{ width: "100%", boxSizing: "border-box", textAlign: "center" }} />
                     </div>
                     <div style={{ flex: 2 }}>
                       {j === 0 && <p style={{ fontSize: 11, color: "var(--color-text-tertiary)", margin: "0 0 3px", fontWeight: 500 }}>Reps</p>}
@@ -719,7 +734,7 @@ function Records({ prs }) {
                 <p style={{ margin: 0, fontSize: 12, color: "var(--color-text-secondary)" }}>Set on {pr.date}</p>
               </div>
               <div style={{ textAlign: "right" }}>
-                <p style={{ margin: 0, fontSize: 18, fontWeight: 500 }}>{pr.weight} {pr.isHeight ? "in" : "lb"}</p>
+                <p style={{ margin: 0, fontSize: 18, fontWeight: 500 }}>{pr.weight} {pr.unit || (pr.isHeight ? "in" : "lb")}</p>
                 <p style={{ margin: 0, fontSize: 12, color: "var(--color-text-secondary)" }}>{pr.reps} reps</p>
               </div>
             </div>
