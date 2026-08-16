@@ -36,6 +36,24 @@ function restDay() {
   return { title: "Rest / Active Recovery", type: "recovery", duration: "", sections: [] };
 }
 
+// Defensive backstop against invented sport days. If the client listed NO fixed
+// activities this week, any day the model tagged as a sport is a hallucination,
+// so convert it to a plain rest day. When activities ARE listed, we trust the
+// plan and let the prompt rule handle it, to avoid false strips from wording
+// mismatches between the listed text and the generated title.
+function stripUnrequestedSports(days, fixedActivities) {
+  const listed = String(fixedActivities || "").toLowerCase().trim();
+  const noneListed = listed === "" || listed === "none";
+  if (!noneListed) return days;
+  for (const name of DAY_ORDER) {
+    const d = days[name];
+    if (d && String(d.type || "").toLowerCase() === "sport") {
+      days[name] = restDay();
+    }
+  }
+  return days;
+}
+
 // Anchored days keep their slot: Pilates and any fixed sport.
 // Rest days (including optional contrast therapy) and the four lifting
 // sessions are movable, so the reorderer can freely place them.
@@ -201,7 +219,7 @@ function buildBasePrompt(fixedActivities, context, recentTraining) {
     "Recent training data (weight x reps per set, weights in lb), possibly followed by the client's own session notes: " + recentTraining,
     "If the client's session notes mention pain, tweaks, fatigue, or difficulty, adjust the plan accordingly: work around a complaining joint with safer variations, hold or reduce weight where a lift was described as a grind, and push a bit more where he reported it felt easy. Reference the relevant note briefly in the affected exercise's notes field so he knows why.",
     // ----- SCHEDULING CONSTRAINTS (new) -----
-    "SCHEDULING CONSTRAINTS (MANDATORY, the plan is rejected if any are broken): Treat reformer Pilates as a leg-focused lower-body day. Do NOT place any lower-body or leg lifting session on the day immediately before OR immediately after Pilates. Never schedule the same muscle-group focus on two consecutive days: no two lower-body days back to back, no two upper-body days back to back, and no lower-body day adjacent to Pilates on either side. Alternate upper and lower across the week so the week contains exactly two upper-body and two lower-body lifting sessions, paired rather than clustered. Keep Pilates and any fixed activities on their given days.",
+    "SCHEDULING CONSTRAINTS (MANDATORY, the plan is rejected if any are broken): Treat reformer Pilates as a leg-focused lower-body day. Do NOT place any lower-body or leg lifting session on the day immediately before OR immediately after Pilates. Never schedule the same muscle-group focus on two consecutive days: no two lower-body days back to back, no two upper-body days back to back, and no lower-body day adjacent to Pilates on either side. Alternate upper and lower across the week so the week contains exactly two upper-body and two lower-body lifting sessions, paired rather than clustered. Keep Pilates and any fixed activities on their given days. Only include sport or recreational sessions such as basketball or tennis that are explicitly listed in the fixed activities for this week. If a sport is not listed, do NOT invent, assume, or schedule it on any day. The client's goal of improving at basketball and tennis guides training emphasis such as power and conditioning work, it does NOT mean adding games to the calendar. Any day with no listed activity and no planned lifting session is a plain rest or recovery day.",
     // ----------------------------------------
     "Rules: 4 lifting sessions per week using an upper/lower split with both strength and hypertrophy days. Keep every session under 60 minutes. Do not stack heavy lifting on the same day as intense sport. Include power work such as box jumps or broad jumps on lower-body days. Include shoulder prehab such as face pulls on upper-body days. Apply progressive overload and state in each exercise's notes when to add weight.",
     "The week is Monday-anchored: include all seven days Monday through Sunday. Keep the plan compact: no warm-up sections, at most two sections per day, and keep notes brief or empty.",
@@ -266,6 +284,7 @@ export default async function handler(req, res) {
       }
 
       plan = parsed.plan;
+      plan.days = stripUnrequestedSports(plan.days, fixedActivities);
       const check = validateWeek(plan.days);
       if (check.valid) {
         res.status(200).json({ plan });
