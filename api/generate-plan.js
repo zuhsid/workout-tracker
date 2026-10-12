@@ -88,7 +88,11 @@ function validateWeek(days) {
     }
   }
 
-  // Rule 2: exactly 2 upper + 2 lower WEIGHTED lifting sessions (Pilates excluded).
+  // Rule 2: balanced split of WEIGHTED lifting sessions (Pilates excluded).
+  // Normal weeks are 2 upper + 2 lower, but travel or busy weeks can have
+  // fewer (e.g. 1 + 1), so only reject more than 2 of a type or an imbalance
+  // of more than one. The old "exactly 2 + 2" rule made short weeks
+  // impossible to satisfy, which burned every retry and timed out on mobile.
   let wUpper = 0;
   let wLower = 0;
   for (const w of week) {
@@ -99,9 +103,9 @@ function validateWeek(days) {
       else if (t.includes("lower") || t.includes("leg")) wLower++;
     }
   }
-  if (wUpper !== 2 || wLower !== 2) {
+  if (wUpper > 2 || wLower > 2 || Math.abs(wUpper - wLower) > 1) {
     violations.push(
-      `Split imbalance: expected 2 upper + 2 lower lifting sessions, got ${wUpper} upper + ${wLower} lower`
+      `Split imbalance: expected at most 2 upper + 2 lower lifting sessions, balanced within one, got ${wUpper} upper + ${wLower} lower`
     );
   }
 
@@ -219,9 +223,9 @@ function buildBasePrompt(fixedActivities, context, recentTraining) {
     "Recent training data (weight x reps per set, weights in lb), possibly followed by the client's own session notes: " + recentTraining,
     "If the client's session notes mention pain, tweaks, fatigue, or difficulty, adjust the plan accordingly: work around a complaining joint with safer variations, hold or reduce weight where a lift was described as a grind, and push a bit more where he reported it felt easy. Reference the relevant note briefly in the affected exercise's notes field so he knows why.",
     // ----- SCHEDULING CONSTRAINTS (new) -----
-    "SCHEDULING CONSTRAINTS (MANDATORY, the plan is rejected if any are broken): Treat reformer Pilates as a leg-focused lower-body day. Do NOT place any lower-body or leg lifting session on the day immediately before OR immediately after Pilates. Never schedule the same muscle-group focus on two consecutive days: no two lower-body days back to back, no two upper-body days back to back, and no lower-body day adjacent to Pilates on either side. Alternate upper and lower across the week so the week contains exactly two upper-body and two lower-body lifting sessions, paired rather than clustered. Keep Pilates and any fixed activities on their given days. Only include sport or recreational sessions such as basketball or tennis that are explicitly listed in the fixed activities for this week. If a sport is not listed, do NOT invent, assume, or schedule it on any day. The client's goal of improving at basketball and tennis guides training emphasis such as power and conditioning work, it does NOT mean adding games to the calendar. Any day with no listed activity and no planned lifting session is a plain rest or recovery day.",
+    "SCHEDULING CONSTRAINTS (MANDATORY, the plan is rejected if any are broken): Treat reformer Pilates as a leg-focused lower-body day. Do NOT place any lower-body or leg lifting session on the day immediately before OR immediately after Pilates. Never schedule the same muscle-group focus on two consecutive days: no two lower-body days back to back, no two upper-body days back to back, and no lower-body day adjacent to Pilates on either side. Alternate upper and lower across the week so the week contains two upper-body and two lower-body lifting sessions, paired rather than clustered. Exception: if the additional context says the client is traveling or only has certain days available, schedule lifting ONLY on the days he says he can train (for example one lower and one upper session) and make every other day rest, while keeping upper and lower balanced. Keep Pilates and any fixed activities on their given days. Only include sport or recreational sessions such as basketball or tennis that are explicitly listed in the fixed activities for this week. If a sport is not listed, do NOT invent, assume, or schedule it on any day. The client's goal of improving at basketball and tennis guides training emphasis such as power and conditioning work, it does NOT mean adding games to the calendar. Any day with no listed activity and no planned lifting session is a plain rest or recovery day.",
     // ----------------------------------------
-    "Rules: 4 lifting sessions per week using an upper/lower split with both strength and hypertrophy days. Keep every session under 60 minutes. Do not stack heavy lifting on the same day as intense sport. Include power work such as box jumps or broad jumps on lower-body days. Include shoulder prehab such as face pulls on upper-body days. Apply progressive overload and state in each exercise's notes when to add weight.",
+    "Rules: 4 lifting sessions per week (fewer only when the additional context limits his available days) using an upper/lower split with both strength and hypertrophy days. Keep every session under 60 minutes. Do not stack heavy lifting on the same day as intense sport. Include power work such as box jumps or broad jumps on lower-body days. Include shoulder prehab such as face pulls on upper-body days. Apply progressive overload and state in each exercise's notes when to add weight.",
     "The week is Monday-anchored: include all seven days Monday through Sunday. Keep the plan compact: no warm-up sections, at most two sections per day, and keep notes brief or empty.",
     "Respond ONLY with valid JSON, no markdown and no backticks. The shape is: a top-level \"days\" object whose keys are Monday, Tuesday, Wednesday, Thursday, Friday, Saturday, Sunday. Each day is an object with: title (string), type (one of: lift, sport, recovery, class, other), duration (string, may be empty), and sections (array; may be empty for rest, sport, class, or recovery days). Each section has name (string) and exercises (array). Each exercise has name (string), sets (string), reps (string), notes (string, may be empty), weights (array of numbers, one per set), and repsPerSet (array of integers, one per set, same length as weights). Prescription rules: 1) Every exercise on a lift day MUST include both weights and repsPerSet fully filled in, one entry per set, so the client never has an empty slot. 2) ALL weights are in pounds (lb) ONLY. Never mention kilograms or kg anywhere, including notes. Progress in 5 lb increments for upper-body lifts and 10 lb for lower-body lifts, rounded to standard plate loads. 3) The first compound movement of each lift session starts with 1 to 2 warmup sets at roughly 50 to 70 percent of the working weight, included in the weights and repsPerSet arrays and counted in the sets string, with notes saying which sets are warmups. Later isolation exercises need no warmups. 4) Progression must always move forward: every exercise with recent data gets EITHER more weight OR more reps than last time, never an identical prescription two weeks running. If the client hit the top of the target rep range on all working sets, raise the working weight across all sets. If he hit it on most sets, raise the weight on the first one or two working sets (a heavier top set) and keep the rest, so every week includes exposure to a heavier load. Only if he clearly missed the rep targets, or his notes describe pain or a grinding effort, hold the weight and add one rep per set instead. Heavier first working sets with a small drop on later sets is encouraged. The goal is steady, aggressive but sustainable strength gains, not repeating last week. 5) Dumbbell convention: every dumbbell weight in the recent training data AND in your prescriptions is the COMBINED weight of both dumbbells, not per hand. So a prescription of 100 means two 50 lb dumbbells. Progress dumbbell lifts in 10 lb combined increments (5 lb per dumbbell) and make sure the per-dumbbell weight is a standard size. In the notes for each dumbbell exercise, spell it out, for example: 100 lb total = 50 lb per dumbbell. Exception: exercises performed with ONE dumbbell at a time (single-arm rows, one-arm presses, goblet squats, single-leg work) use the weight of that single dumbbell, progressed in 5 lb steps, and their history is already in single-dumbbell terms. 6) For exercises with no recent data, prescribe a conservative starting weight inferred from his comparable lifts and say in notes that it is a starting estimate to adjust for form. 7) Measurement conventions for jumps: box jump values are heights in inches; broad jump values are distances in yards. In the recent training data and in your weights arrays for these exercises, use those units, never pounds. Progress jumps conservatively (box height in 2 to 3 inch steps, broad jump distance in 0.25 yd steps) and only when recent attempts were solid. 8) Weight history may only inform an exercise if it is the SAME exercise or a true variant: same primary muscle group AND same movement pattern, like barbell bench and dumbbell bench. NEVER carry weights across different muscle groups or patterns. Lying or seated leg curls (hamstrings) and leg extensions (quads) are unrelated exercises and must never share weight history. Rows never inform presses, curls never inform extensions. When unsure whether two exercises are true variants, treat the exercise as having no data and give a conservative starting estimate instead. 9) Vary exercise selection week to week: keep one or two key indicator lifts per muscle group consistent for measurable progression, but rotate secondary and accessory movements (for example swap incline barbell for incline dumbbell, cable row for chest-supported row) so sessions do not repeat identically. Use the recent training data to see what he did recently and choose fresh variations.",
   ].join(" ");
@@ -241,6 +245,17 @@ function buildCorrectionPrompt(basePrompt, plan, violations) {
 // ---------------------------------------------------------------------------
 // Handler
 // ---------------------------------------------------------------------------
+// Give the function room to finish on Vercel (seconds).
+export const config = { maxDuration: 300 };
+
+// The response is streamed as newline-delimited JSON (NDJSON). While the plan
+// is being generated, a small {"status":...} line is written every few
+// seconds. That keeps mobile Safari's connection alive: Safari drops a fetch
+// that sits silent for too long, which was the "Load failed" error. The LAST
+// line is the real result: {"plan":...} (optionally with "warning") or
+// {"error":...}.
+const HEARTBEAT_MS = 5000;
+
 export default async function handler(req, res) {
   if (req.method !== "POST") {
     res.status(405).json({ error: "Method not allowed" });
@@ -261,52 +276,71 @@ export default async function handler(req, res) {
   const context = (body && body.context) || "none";
   const recentTraining = (body && body.recentTraining) || "none";
 
+  // Start the stream right away so the browser sees bytes immediately.
+  res.statusCode = 200;
+  res.setHeader("Content-Type", "application/x-ndjson; charset=utf-8");
+  res.setHeader("Cache-Control", "no-cache, no-transform");
+  res.setHeader("X-Accel-Buffering", "no");
+  if (typeof res.flushHeaders === "function") res.flushHeaders();
+
+  const send = (obj) => {
+    try { res.write(JSON.stringify(obj) + "\n"); } catch (_) {}
+  };
+  let stage = "generating";
+  send({ status: stage });
+  const heartbeat = setInterval(() => send({ status: stage }), HEARTBEAT_MS);
+  const finish = (obj) => {
+    clearInterval(heartbeat);
+    send(obj);
+    res.end();
+  };
+
   const basePrompt = buildBasePrompt(fixedActivities, context, recentTraining);
-  const MAX_ATTEMPTS = 3;
+
+  // Generate once, then validate. If the schedule breaks a rule, fix it with
+  // the deterministic reorder (instant) instead of asking the model to
+  // rewrite the whole plan (another ~45s each time). Only if the reorder
+  // cannot solve it do we spend ONE correction call on the model.
+  const generate = async (prompt) => {
+    const { ok, status, data } = await callAnthropic(apiKey, prompt);
+    if (!ok) {
+      return { error: (data && data.error && data.error.message) || ("Anthropic API returned status " + status) };
+    }
+    const parsed = parsePlan(data);
+    if (parsed.error) return { error: parsed.error };
+    parsed.plan.days = stripUnrequestedSports(parsed.plan.days, fixedActivities);
+    return { plan: parsed.plan };
+  };
 
   try {
-    let plan = null;
-    let violations = [];
-    let prompt = basePrompt;
+    let result = await generate(basePrompt);
+    if (result.error) return finish({ error: result.error });
+    let plan = result.plan;
 
-    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-      const { ok, status, data } = await callAnthropic(apiKey, prompt);
-      if (!ok) {
-        const msg = (data && data.error && data.error.message) || ("Anthropic API returned status " + status);
-        res.status(502).json({ error: msg });
-        return;
-      }
+    let check = validateWeek(plan.days);
+    if (check.valid) return finish({ plan });
 
-      const parsed = parsePlan(data);
-      if (parsed.error) {
-        res.status(502).json({ error: parsed.error });
-        return;
-      }
+    stage = "fixing schedule";
+    let fixed = reorderToValid(plan.days);
+    if (fixed) return finish({ plan: { ...plan, days: fixed } });
 
-      plan = parsed.plan;
-      plan.days = stripUnrequestedSports(plan.days, fixedActivities);
-      const check = validateWeek(plan.days);
-      if (check.valid) {
-        res.status(200).json({ plan });
-        return;
-      }
-
-      // Invalid: keep the violations and try a correction pass.
-      violations = check.violations;
-      prompt = buildCorrectionPrompt(basePrompt, plan, violations);
+    // Reorder could not solve it (usually a wrong upper/lower count). One
+    // correction pass from the model, then reorder again if needed.
+    stage = "correcting plan";
+    const violations = check.violations;
+    result = await generate(buildCorrectionPrompt(basePrompt, plan, violations));
+    if (!result.error) {
+      plan = result.plan;
+      check = validateWeek(plan.days);
+      if (check.valid) return finish({ plan });
+      fixed = reorderToValid(plan.days);
+      if (fixed) return finish({ plan: { ...plan, days: fixed } });
     }
 
-    // Retries exhausted. Try the deterministic reorder on the last plan.
-    const fixed = reorderToValid(plan.days);
-    if (fixed) {
-      res.status(200).json({ plan: { ...plan, days: fixed } });
-      return;
-    }
-
-    // Could not solve even deterministically (anchors conflict). Return the
-    // plan with a warning rather than failing, so the client still gets one.
-    res.status(200).json({ plan, warning: "Could not satisfy all scheduling rules automatically: " + violations.join("; ") });
+    // Still not solvable (anchors conflict). Return the plan with a warning
+    // rather than failing, so the client still gets one.
+    finish({ plan, warning: "Could not satisfy all scheduling rules automatically: " + check.violations.join("; ") });
   } catch (e) {
-    res.status(500).json({ error: "Request to Anthropic failed: " + (e && e.message ? e.message : String(e)) });
+    finish({ error: "Request to Anthropic failed: " + (e && e.message ? e.message : String(e)) });
   }
 }
