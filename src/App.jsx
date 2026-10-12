@@ -284,6 +284,7 @@ export default function App() {
 function WeekView({ weekKey, weekOffset, setWeekOffset, workoutLogs, fixedActivities, weeklyPlans, setWeeklyPlans, effectivePlans, setTab }) {
   const [loading, setLoading] = useState(false);
   const [genError, setGenError] = useState("");
+  const [statusMsg, setStatusMsg] = useState("");
   const [showPaste, setShowPaste] = useState(false);
   const [pasteText, setPasteText] = useState("");
   const [pasteError, setPasteError] = useState("");
@@ -309,7 +310,12 @@ function WeekView({ weekKey, weekOffset, setWeekOffset, workoutLogs, fixedActivi
     const recentTraining = summarizeRecentTraining(workoutLogs);
     const payload = { fixedActivities: fixedList, context: weekContext || "none", recentTraining: recentTraining || "none" };
 
+    const dropped = (e) =>
+      "The connection dropped before the plan finished" + (e && e.message ? " (" + e.message + ")" : "") +
+      ". Keep this screen open and unlocked while it generates, then try again.";
+
     let res, data;
+    setStatusMsg("Generating plan...");
     try {
       res = await fetch("/api/generate-plan", {
         method: "POST",
@@ -317,17 +323,53 @@ function WeekView({ weekKey, weekOffset, setWeekOffset, workoutLogs, fixedActivi
         body: JSON.stringify(payload)
       });
     } catch (e) {
-      setGenError("Could not reach the server. Is the app deployed / dev server running? (" + e.message + ")");
-      setLoading(false); return;
+      setGenError(dropped(e)); setStatusMsg(""); setLoading(false); return;
     }
     if (!res.ok) {
       let t = ""; try { t = await res.text(); } catch (_) {}
       setGenError("Server error " + res.status + ": " + t.slice(0, 300));
-      setLoading(false); return;
+      setStatusMsg(""); setLoading(false); return;
     }
-    try { data = await res.json(); } catch (e) {
-      setGenError("Server did not return JSON."); setLoading(false); return;
+
+    // The server streams NDJSON: {"status":...} heartbeat lines while it works,
+    // then a final {"plan":...} or {"error":...} line. Reading as it arrives
+    // keeps Safari's connection alive. Falls back to plain JSON if needed.
+    try {
+      let text = "";
+      if (res.body && res.body.getReader) {
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buf = "";
+        for (;;) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buf += decoder.decode(value, { stream: true });
+          const lines = buf.split("\n");
+          buf = lines.pop();
+          for (const line of lines) {
+            if (!line.trim()) continue;
+            let msg; try { msg = JSON.parse(line); } catch (_) { continue; }
+            if (msg.status) {
+              setStatusMsg(msg.status === "generating" ? "Generating plan..." : "Almost done, " + msg.status + "...");
+            } else {
+              data = msg;
+            }
+          }
+        }
+        text = buf + decoder.decode();
+      } else {
+        text = await res.text();
+      }
+      if (!data && text.trim()) {
+        // Last line without a trailing newline, or an old non-streaming server
+        const last = text.trim().split("\n").pop();
+        data = JSON.parse(last);
+      }
+    } catch (e) {
+      setGenError(dropped(e)); setStatusMsg(""); setLoading(false); return;
     }
+    setStatusMsg("");
+    if (!data) { setGenError(dropped()); setLoading(false); return; }
     if (data.error) { setGenError(data.error); setLoading(false); return; }
     if (!data.plan || !data.plan.days) {
       setGenError("Response missing a valid plan."); setLoading(false); return;
@@ -358,7 +400,7 @@ function WeekView({ weekKey, weekOffset, setWeekOffset, workoutLogs, fixedActivi
             style={{ width: "100%", minHeight: 72, fontSize: 13, borderRadius: 8, border: "0.5px solid var(--color-border-secondary)", background: "var(--color-background-secondary)", color: "var(--color-text-primary)", padding: "8px 10px", boxSizing: "border-box", resize: "vertical" }} />
           <button onClick={generatePlan} disabled={loading}
             style={{ marginTop: 10, padding: "8px 16px", borderRadius: 8, border: "0.5px solid var(--color-border-secondary)", background: "transparent", color: "var(--color-text-primary)", cursor: loading ? "default" : "pointer", fontSize: 13 }}>
-            {loading ? "Generating plan..." : "Generate this week's plan ↗"}
+            {loading ? (statusMsg || "Generating plan...") : "Generate this week's plan ↗"}
           </button>
           {genError && <p style={{ marginTop: 10, fontSize: 12, color: "#b91c1c", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{genError}</p>}
           <div style={{ marginTop: 12, borderTop: "0.5px solid var(--color-border-tertiary)", paddingTop: 12 }}>
